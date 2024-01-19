@@ -39,23 +39,30 @@ with gzip.open(colon_sequencing, 'rt') as file:
 with gzip.open(lung_sequencing, 'rt') as file:
     og_lung = pd.read_csv(file, sep='\t')
 
+#This is a function to arrange the rna sequencing dataframe in a way that is easy to put into the machine function
 def arrange_df(phenotype, genes):
+    #Don't need the gene names for the machine function but store them here in case they're needed later
     gene_names = genes.iloc[:,0]
+    #The following lines format the dataframe and inner merge the phenotype samples and sequencing samples so only the samples that have phenotypes are returned
     columns = phenotype['submitter_id.samples'].tolist()
     selected_columns = genes.loc[:, genes.columns.isin(columns)]
     selected_columns_t = selected_columns.transpose().reset_index()
+    #Rename the index column to sampleID after resetting the index
     selected_columns_t = selected_columns_t.rename(columns={'index': 'SampleID'})
     selected_rows = phenotype[phenotype['submitter_id.samples'].isin(selected_columns.columns)]
     selected_rows = selected_rows[['submitter_id.samples', 'sample_type.samples']]
     merged_df = pd.merge(selected_columns_t, selected_rows, how='inner', left_on='SampleID', right_on='submitter_id.samples')
+    #Since we're selecting the columns, we had to transpose, transpose back
     merged_df_t = merged_df.T
+    #Return the dataframe while getting rid of the second to last column since we don't want it anymore, the last one is good enough
     return(merged_df_t.iloc[:-2].append(merged_df_t.iloc[-1]).transpose())
 
+#Function that splits, trains and test the reaaranged sequencing dataframe on an SVM model and then prints the results
 def machine(df):
     y = df['sample_type.samples']  
     X = df.drop(columns=['SampleID', 'sample_type.samples'])
     test_size=0.5
-        # Split the data into training and testing sets (e.g., 80% train, 20% test)
+        # Split the data into training and testing sets (e.g., 80% train, 20% test) according to the test_size variable
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=42)
     svm_model = SVC(kernel='linear', C=1.0)
     # Train the SVM model
@@ -71,21 +78,20 @@ def machine(df):
     print('Classification Report:')
     print(classification_report_result)
     
-#    
+# Arrange the rna sequencing dataframes that are shortened and the full ones
 colon_merged_df= arrange_df(colon_phenotype, colon_tm)
 lung_merged_df= arrange_df(lung_phenotype, lung_tm)
 total_colon_merged_df = arrange_df(colon_phenotype, og_colon)
 total_lung_merged_df = arrange_df(lung_phenotype, og_lung)
 
-colon_merged_df
-# Merged 
+# See if the machine is able to tell the difference between the colon and lung datasets
 colon_merged_df_2 = colon_merged_df[colon_merged_df["sample_type.samples"] == "Primary Tumor"]
 colon_merged_df_2["sample_type.samples"] = "colon"
 lung_merged_df_2 = lung_merged_df[lung_merged_df["sample_type.samples"] == "Primary Tumor"]
 lung_merged_df_2["sample_type.samples"] = "lung"
 merged = pd.concat([lung_merged_df_2, colon_merged_df_2], ignore_index=True)
 
-
+#Run the machine function
 machine(colon_merged_df)
 machine(lung_merged_df)
 machine(total_colon_merged_df)
