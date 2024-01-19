@@ -20,10 +20,10 @@ lung_sequencing = "TCGA-LUAD.htseq_fpkm.tsv.gz"
 
 #Open the phenotype csvs for sorting the samples into primary tumor vs not cancer later on
 with gzip.open(colon_phenotype, 'rt') as file:
-    df = pd.read_csv(file, sep='\t')
+    colon_phenotype = pd.read_csv(file, sep='\t')
 
 with gzip.open(lung_phenotype, 'rt') as file:
-    lung_df = pd.read_csv(file, sep='\t')
+    lung_phenotype = pd.read_csv(file, sep='\t')
 
 #These are the dataframes only containing enhanced genes in the colon and lung cancer from the tm_function
 with open(colon_genes, 'rt') as file:
@@ -32,13 +32,50 @@ with open(colon_genes, 'rt') as file:
 with open(lung_genes, 'rt') as file:
     lung_tm = pd.read_csv(file)
 
-#Full rna sequencing datasets to see how well 
+#Full rna sequencing datasets to see how well it commpares to the shortened ones
 with gzip.open(colon_sequencing, 'rt') as file:
     og_colon = pd.read_csv(file, sep='\t')
     
 with gzip.open(lung_sequencing, 'rt') as file:
     og_lung = pd.read_csv(file, sep='\t')
 
+def arrange_df(phenotype, genes):
+    gene_names = genes.iloc[:,0]
+    columns = phenotype['submitter_id.samples'].tolist()
+    selected_columns = genes.loc[:, genes.columns.isin(columns)]
+    selected_columns_t = selected_columns.transpose().reset_index()
+    selected_columns_t = selected_columns_t.rename(columns={'index': 'SampleID'})
+    selected_rows = phenotype[phenotype['submitter_id.samples'].isin(selected_columns.columns)]
+    selected_rows = selected_rows[['submitter_id.samples', 'sample_type.samples']]
+    merged_df = pd.merge(selected_columns_t, selected_rows, how='inner', left_on='SampleID', right_on='submitter_id.samples')
+    merged_df_t = merged_df.T
+    return(merged_df_t.iloc[:-2].append(merged_df_t.iloc[-1]).transpose())
+
+def machine(df):
+    X = df.drop(columns=['SampleID', 'sample_type.samples'])
+    y = df['sample_type.samples']    
+    test_size=0.5
+        # Split the data into training and testing sets (e.g., 80% train, 20% test)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size, random_state=42)
+    
+    svm_model = SVC(kernel='linear', C=1.0)
+    
+    # Train the SVM model
+    svm_model.fit(X_train, y_train)
+    
+    # Make predictions on the testing set
+    y_pred = svm_model.predict(X_test)
+    
+    # Evaluate the model
+    accuracy = accuracy_score(y_test, y_pred)
+    classification_report_result = classification_report(y_test, y_pred)
+    
+    # Display results
+    print('Results of testing on ' + df + 'with test size' + test_size)
+    print(f'Accuracy: {accuracy}')
+    print('Classification Report:')
+    print(classification_report_result)
+    
 
 gene_names = colon_tm.iloc[:,0]
 columns = df['submitter_id.samples'].tolist()
