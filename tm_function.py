@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[12]:
 
 
 # The goal of this function will be to take in normalized RNA seq datasets and then return a dataset with only genes that 
@@ -12,51 +11,46 @@ import gzip
 import requests
 
 
-# In[32]:
-
-
 sequencing = "TCGA-COAD.htseq_fpkm.tsv.gz"
 lung_sequencing = "TCGA-LUAD.htseq_fpkm.tsv.gz"
 colon_enhanced_genes = "tissue_specificity_rna_colon_Group.tab"
 lung_enhanced_genes = "tissue_category_rna_lung_Tissue.tsv"
 
-
-# In[33]:
-
-
+#put lung sequencing csv into variable lung
 with gzip.open(lung_sequencing, 'rt') as file:
     # Read the TSV file into a pandas DataFrame
     lung = pd.read_csv(file, sep='\t')
-#Make a list of file_paths for each tissue
 
-
-# In[15]:
 
 
 # Code that creates the lists of genes in cancer and the list of enriched genes in each tissue to extract for testing
 # Make a list of file paths for each sequencing data
 # Specify the file path
 
+
+
+#put colon sequencing csv into variable colon
 with gzip.open(sequencing, 'rt') as file:
     # Read the TSV file into a pandas DataFrame
     df = pd.read_csv(file, sep='\t')
 #Make a list of file_paths for each tissue
 
-# Open the gzip-compressed file and read it with pandas
+# Open the gzip-compressed file of enhanced gene in colon cancer and read it with pandas
 with open(colon_enhanced_genes, 'rt') as file:
     # Read the TSV file into a pandas DataFrame
     colon_genes = pd.read_csv(file, sep='\t')
 colon_gene_names = colon_genes['Gene']
 colon_gene_list = colon_gene_names.tolist()
 
+
+
+# Open the gzip-compressed file of enhanced gene in lung cancer and read it with pandas
 with open(lung_enhanced_genes, 'rt') as file:
     # Read the TSV file into a pandas DataFrame
     lung_genes = pd.read_csv(file, sep='\t')
 lung_gene_names = lung_genes['Gene']
 lung_gene_list = lung_gene_names.tolist()
 
-
-# In[26]:
 
 
 # Function to convert gene names in enriched genes to ensembl
@@ -83,17 +77,11 @@ def convert_gene_names_to_ensembl(gene_names):
 ensembl_ids = convert_gene_names_to_ensembl(gene_names)
 
 
-# In[24]:
-
-
 # Convert gene names to Ensembl IDs
 # colon_ensembl_ids = convert_gene_names_to_ensembl(colon_gene_names)
 # lung_ensembl_ids = convert_gene_names_to_ensembl(lung_gene_names)
 gene_names = pd.concat([colon_gene_names, lung_gene_names], ignore_index=True)
 gene_names
-
-
-# In[27]:
 
 
 #TM function that returns the dataframe 
@@ -108,30 +96,13 @@ def TM(df, ensembl_ids):
     return df
 
 
-# In[29]:
+colon_df = TM(df, ensembl_ids)
+lung_df = TM(lung, ensembl_ids)
 
+#Download dataframes with enhanced genes
+colon_csv_file_path = "/home/ani/ML_Project_2024/tm_function/colon_tm.csv"
+colon_df.to_csv(csv_file_path, index=False)
 
-df = TM(df, ensembl_ids)
-df
-
-
-# In[34]:
-
-
-lung = TM(lung, ensembl_ids)
-lung
-
-
-# In[30]:
-
-
-csv_file_path = "/home/ani/ML_Project_2024/tm_function/colon_tm.csv"
-df.to_csv(csv_file_path, index=False)
-
-
-# In[35]:
-
-
-csv_file_path = "/home/ani/ML_Project_2024/tm_function/lung_tm.csv"
-lung.to_csv(csv_file_path, index=False)
+lung_csv_file_path = "/home/ani/ML_Project_2024/tm_function/lung_tm.csv"
+lung_df.to_csv(lung_csv_file_path, index=False)
 
