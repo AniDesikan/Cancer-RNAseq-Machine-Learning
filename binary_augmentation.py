@@ -50,7 +50,3 @@ def inject_feature_noise(data, noise_level):
 inject_feature_noise(colon_tm, 0.05)
 
 #TODO: Add bootstrapping function and teston colon_tm
-
-
-colon_tm
-
