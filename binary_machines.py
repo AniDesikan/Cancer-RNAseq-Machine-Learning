@@ -52,11 +52,11 @@ def arrange_df(phenotype, genes):
     return(merged_df_t.iloc[:-2].append(merged_df_t.iloc[-1]).transpose())
 
 def machine(df):
+    y = df['sample_type.samples']  
     X = df.drop(columns=['SampleID', 'sample_type.samples'])
-    y = df['sample_type.samples']    
     test_size=0.5
         # Split the data into training and testing sets (e.g., 80% train, 20% test)
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=42)
     svm_model = SVC(kernel='linear', C=1.0)
     # Train the SVM model
     svm_model.fit(X_train, y_train)
@@ -66,7 +66,7 @@ def machine(df):
     accuracy = accuracy_score(y_test, y_pred)
     classification_report_result = classification_report(y_test, y_pred)
     # Display results
-    print('Results of testing on ' + df + 'with test size' + test_size)
+    print('Results of testing with test size ' + str(test_size))
     print(f'Accuracy: {accuracy}')
     print('Classification Report:')
     print(classification_report_result)
@@ -77,6 +77,7 @@ lung_merged_df= arrange_df(lung_phenotype, lung_tm)
 total_colon_merged_df = arrange_df(colon_phenotype, og_colon)
 total_lung_merged_df = arrange_df(lung_phenotype, og_lung)
 
+colon_merged_df
 # Merged 
 colon_merged_df_2 = colon_merged_df[colon_merged_df["sample_type.samples"] == "Primary Tumor"]
 colon_merged_df_2["sample_type.samples"] = "colon"
