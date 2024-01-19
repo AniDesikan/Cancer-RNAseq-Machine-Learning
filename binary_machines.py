@@ -4,39 +4,40 @@ import pandas as pd
 import gzip
 import requests
 import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.svm import SVC
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import accuracy_score, classification_report
 
-
-phenotype = "TCGA-COAD.GDC_phenotype.tsv.gz"
-with gzip.open(phenotype, 'rt') as file:
-    # Read the TSV file into a pandas DataFrame
-    df = pd.read_csv(file, sep='\t')
-#Make a list of file_paths for each tissue
-
+#Initialize all the file paths for the csvs containing cancer RNA sequencing information
+#The TCGA datasets were taken from the Xena UCSC data portal
+colon_phenotype = "TCGA-COAD.GDC_phenotype.tsv.gz"
 lung_phenotype = "TCGA-LUAD.GDC_phenotype.tsv.gz"
-with gzip.open(lung_phenotype, 'rt') as file:
-    # Read the TSV file into a pandas DataFrame
-    lung_df = pd.read_csv(file, sep='\t')
-#Make a list of file_paths for each tissue
-
-with open("colon_tm.csv", 'rt') as file:
-    # Read the TSV file into a pandas DataFrame
-    colon_tm = pd.read_csv(file)
-    
-with open("lung_tm.csv", 'rt') as file:
-    # Read the TSV file into a pandas DataFrame
-    lung_tm = pd.read_csv(file)
-    
-sequencing = "TCGA-COAD.htseq_fpkm.tsv.gz"
-with gzip.open(sequencing, 'rt') as file:
-    # Read the TSV file into a pandas DataFrame
-    og = pd.read_csv(file, sep='\t')
-#Make a list of file_paths for each tissue
-
+colon_genes = "colon_tm.csv"
+lung_genes = "lung_tm.csv"
+colon_sequencing = "TCGA-COAD.htseq_fpkm.tsv.gz"
 lung_sequencing = "TCGA-LUAD.htseq_fpkm.tsv.gz"
+
+#Open the phenotype csvs for sorting the samples into primary tumor vs not cancer later on
+with gzip.open(colon_phenotype, 'rt') as file:
+    df = pd.read_csv(file, sep='\t')
+
+with gzip.open(lung_phenotype, 'rt') as file:
+    lung_df = pd.read_csv(file, sep='\t')
+
+#These are the dataframes only containing enhanced genes in the colon and lung cancer from the tm_function
+with open(colon_genes, 'rt') as file:
+    colon_tm = pd.read_csv(file) 
+    
+with open(lung_genes, 'rt') as file:
+    lung_tm = pd.read_csv(file)
+
+#Full rna sequencing datasets to see how well 
+with gzip.open(colon_sequencing, 'rt') as file:
+    og_colon = pd.read_csv(file, sep='\t')
+    
 with gzip.open(lung_sequencing, 'rt') as file:
-    # Read the TSV file into a pandas DataFrame
     og_lung = pd.read_csv(file, sep='\t')
-#Make a list of file_paths for each tissue
 
 
 gene_names = colon_tm.iloc[:,0]
@@ -198,10 +199,7 @@ print(classification_report_result)
 
 
 #Dataset with all genes
-from sklearn.model_selection import train_test_split
-from sklearn.svm import SVC
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import accuracy_score, classification_report
+
 
 # Assuming df is your Pandas DataFrame
 # Replace 'TargetColumnName' with the actual name of your target column
