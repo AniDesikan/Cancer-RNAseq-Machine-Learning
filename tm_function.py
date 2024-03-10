@@ -1,59 +1,51 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-
-
 # The goal of this function will be to take in normalized RNA seq datasets and then return a dataset with only genes that 
 # are most important for the tissues that we are looking at.
-
+#################################################
+# IMPORTS
+#################################################
 import pandas as pd
 import gzip
 import requests
+import numpy as np
+#################################################
+# CONSTANTS
+#################################################
 
 
-sequencing = "TCGA-COAD.htseq_fpkm.tsv.gz"
-lung_sequencing = "TCGA-LUAD.htseq_fpkm.tsv.gz"
-colon_enhanced_genes = "tissue_specificity_rna_colon_Group.tab"
-lung_enhanced_genes = "tissue_category_rna_lung_Tissue.tsv"
 
-#put lung sequencing csv into variable lung
-with gzip.open(lung_sequencing, 'rt') as file:
-    # Read the TSV file into a pandas DataFrame
-    lung = pd.read_csv(file, sep='\t')
-
-
+#################################################
+# HELPER FUNCTIONS
+#################################################
 
 # Code that creates the lists of genes in cancer and the list of enriched genes in each tissue to extract for testing
 # Make a list of file paths for each sequencing data
 # Specify the file path
 
-
-
-#put colon sequencing csv into variable colon
-with gzip.open(sequencing, 'rt') as file:
+def sequencing_dataframe(sequencing):
+    with open(sequencing, 'rt') as file:
     # Read the TSV file into a pandas DataFrame
-    df = pd.read_csv(file, sep='\t')
-#Make a list of file_paths for each tissue
+        df = pd.read_csv(file, sep='\t')
+    return df
 
-# Open the gzip-compressed file of enhanced gene in colon cancer and read it with pandas
-with open(colon_enhanced_genes, 'rt') as file:
+def enhanced_gene_dataframe(genes):
+    with open(genes, 'rt') as file:
     # Read the TSV file into a pandas DataFrame
-    colon_genes = pd.read_csv(file, sep='\t')
-colon_gene_names = colon_genes['Gene']
-colon_gene_list = colon_gene_names.tolist()
+        df= pd.read_csv(file)
+    df.columns.values[0] = 'Gene'
+    df_gene_names = df['Gene']
+    df_gene_list = df_gene_names.tolist()
+    return df, df_gene_names, df_gene_list
 
-
-
-# Open the gzip-compressed file of enhanced gene in lung cancer and read it with pandas
-with open(lung_enhanced_genes, 'rt') as file:
-    # Read the TSV file into a pandas DataFrame
-    lung_genes = pd.read_csv(file, sep='\t')
-lung_gene_names = lung_genes['Gene']
-lung_gene_list = lung_gene_names.tolist()
-
-
-
-# Function to convert gene names in enriched genes to ensembl
+def filter_genes(df, value):
+    df = df.sort_values(by='adj.P.Val', ascending=True)
+    number = 2 ** value
+    df = df.iloc[:number, :]
+    df_gene_names = df['Gene']
+    return df_gene_names
+    
 def convert_gene_names_to_ensembl(gene_names):
     ensembl_ids = []
     # Ensembl REST API endpoint for mapping gene names to Ensembl IDs
@@ -74,35 +66,148 @@ def convert_gene_names_to_ensembl(gene_names):
             # If the request was not successful, append None to the list
             ensembl_ids.append(None)
     return ensembl_ids
-ensembl_ids = convert_gene_names_to_ensembl(gene_names)
 
+def separate_cancer(phenotypes, df):
+    if type(df) == str:
+        data = sequencing_dataframe(df)
+    else:
+        data = df
+    phenotypes = sequencing_dataframe(phenotypes)
+    df = data.T
+    df['id'] = df.index
+    ph = phenotypes[['submitter_id.samples', 'sample_type.samples']]
+    merged_df = ph.merge(df, left_on='submitter_id.samples', right_on='id', how='inner')
+    primary_tumor_ids = merged_df.loc[merged_df['sample_type.samples'] == 'Primary Tumor', 'submitter_id.samples']
+    cancer = merged_df[merged_df['submitter_id.samples'].isin(primary_tumor_ids)]
+    healthy = merged_df[~merged_df['submitter_id.samples'].isin(primary_tumor_ids)]
+    cancer['is_cancer'] = 1
+    healthy['is_cancer'] = 0
+    return cancer, healthy
 
-# Convert gene names to Ensembl IDs
-# colon_ensembl_ids = convert_gene_names_to_ensembl(colon_gene_names)
-# lung_ensembl_ids = convert_gene_names_to_ensembl(lung_gene_names)
-gene_names = pd.concat([colon_gene_names, lung_gene_names], ignore_index=True)
-gene_names
-
+#################################################
+# TM FUNCTION
+#################################################
 
 #TM function that returns the dataframe 
-def TM(df, ensembl_ids):
-    genes_in_df = df["Ensembl_ID"].tolist()
+# Inputs are the path to the dataframe, the enhanced genes, and the value of how many genes to return
+def TM(df_path, enhanced_genes, value):
+
+    #new stuff
+    data = sequencing_dataframe(df_path)
+    genes, gene_names, gene_list = enhanced_gene_dataframe(enhanced_genes)
+    filtered = filter_genes(genes, value)
+    ensembl_ids = convert_gene_names_to_ensembl(filtered)
+
+    genes_in_df = data["Ensembl_ID"].tolist()
     genes_in_df_no_decimal = []
     for gene in genes_in_df:
         genes_in_df_no_decimal.append(gene.split('.')[0])
     genes_in_df_no_decimal
-    df["genes"] = genes_in_df_no_decimal
-    df = df[df["genes"].isin(ensembl_ids)]
-    return df
+    data["Ensembl_ID"] = genes_in_df_no_decimal
+    data = data[data["Ensembl_ID"].isin(ensembl_ids)]
+    return data
+
+#################################################
+# NOISE INJECTION FUNCTION
+#################################################
+
+# This gives the random addition of Gaussian noise with variance of 0.1 on normalized data (unless another noise_level number is given)
+# Found it on this paper on GAN Data Augmentation
+# https://academic.oup.com/bioinformatics/article/39/Supplement_1/i111/7210506
+
+def add_gaussian_noise(df, noise_level=0.1):
+    noisy_df = df.copy()
+    # Select numeric columns to add noise
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    # Add Gaussian noise to numeric columns
+    noisy_df[numeric_cols] += np.random.normal(scale=noise_level, size=noisy_df[numeric_cols].shape)
+    return noisy_df
+
+# Different type of noise models suggestion from Hakan:
+
+def add_uniform_noise(df, noise_level=0.1):
+    noisy_df = df.copy()
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    noisy_df[numeric_cols] += np.random.uniform(-noise_level, noise_level, size=noisy_df[numeric_cols].shape)
+    return noisy_df
+    
+def add_salt_and_pepper_noise(df, noise_level=0.1):
+    noisy_df = df.copy()
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    n_salt = int(noise_level * noisy_df[numeric_cols].size * 0.5)
+    for col in numeric_cols:
+        indices = np.random.randint(0, len(noisy_df), n_salt)
+        noisy_df[col].iloc[indices[:n_salt//2]] = noisy_df[col].max()
+        noisy_df[col].iloc[indices[n_salt//2:]] = noisy_df[col].min()
+    return noisy_df
+    
+def add_poisson_noise(df, noise_level=1):
+    noisy_df = df.copy()
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    lambda_ = noise_level
+    noisy_df[numeric_cols] += np.random.poisson(lambda_, size=noisy_df[numeric_cols].shape)
+    return noisy_df
+
+def add_exponential_noise(df, noise_level=1):
+    noisy_df = df.copy()
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    noisy_df[numeric_cols] += np.random.exponential(scale=noise_level, size=noisy_df[numeric_cols].shape)
+    return noisy_df
+
+def noise_injection(type, df, noise_level):
+    type = type.lower()
+    if noise_level == None and type == "uniform" or type == "salt and pepper":
+        noise_level = 0.1
+    elif noise_level == None and type == "poisson" or type == "exponential":
+        noise_level = 1
+    if type == "uniform":
+        noisy_df = add_uniform_noise(df, noise_level)
+    if type == "salt and pepper":
+        noisy_df = add_salt_and_pepper_noise(df, noise_level)
+    if type == "poisson":
+        noisy_df = add_poisson_noise(df, noise_level)
+    if type == "exponential":
+        noisy_df = add_exponential_noise(df, noise_level)
+    return noisy_df
 
 
-colon_df = TM(df, ensembl_ids)
-lung_df = TM(lung, ensembl_ids)
+#################################################
+# INTERPOLATION FUNCTION(s)
+#################################################
 
-#Download dataframes with enhanced genes
-colon_csv_file_path = "/home/ani/ML_Project_2024/tm_function/colon_tm.csv"
-colon_df.to_csv(csv_file_path, index=False)
+# There are 2 kinds of interpolation: The more complex "spline interpolation"
+# and the simpler, less computationally expensive "linear interpolation"
 
-lung_csv_file_path = "/home/ani/ML_Project_2024/tm_function/lung_tm.csv"
-lung_df.to_csv(lung_csv_file_path, index=False)
+# Linear interpolation is what the GAN paper above used, I can't find any papers that use interpolation on spline interpolation
+
+# The paper also did a really weird kind of interpolation that I don't really understand, so I've also got another function that does the same
+# thing but with a more traditional linear interpolation formula
+
+# Link to code (data_augmentation function): https://github.com/KBRI-Neuroinformatics/WGAN-for-RNASeq-analysis/blob/master/WGAN-for-RNASeq-analysis/preprocess.py
+
+##################################################
+
+def linear_interpolation(data):
+    interpolated_samples = []
+    data = data.reset_index(drop=True)
+    for i in range(len(data.index)):
+        try:
+            A = data.iloc[i-1,1:]
+            B = data.iloc[i,1:]
+            interpolated_row = []
+            for gene1, gene2 in zip(A, B):
+                interpolated_gene = (gene1 + gene2) / 2
+                interpolated_row.append(interpolated_gene)
+            interpolated_samples.append(interpolated_row)
+        except:
+            print("failed at index "+ str(i))
+    
+    # Add index to interpolated samples
+    interpolated_df = pd.DataFrame(interpolated_samples, columns=data.columns[1:])
+    data = data.iloc[:,1:]
+    
+    # Concatenate interpolated_df with the original data
+    concatenated_df = pd.concat([data, interpolated_df])
+
+    return concatenated_df
 
