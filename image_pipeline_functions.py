@@ -31,11 +31,11 @@ from sklearn.metrics import accuracy_score
 from machines.Xception import Xception, BasicConv, ResidualUnit, MiddleFlowUnit, ExitFlow
 import tensorflow as tf
 from tensorflow.keras import models,layers,losses,metrics,optimizers,Input
-gpus = tf.config.experimental.list_physical_devices('GPU')
-print(gpus)
-if gpus:
-    for gpu in gpus:
-        tf.config.experimental.set_memory_growth(gpu, True)
+# gpus = tf.config.experimental.list_physical_devices('GPU')
+# print(gpus)
+# if gpus:
+#     for gpu in gpus:
+#         tf.config.experimental.set_memory_growth(gpu, True)
 from machines.Xception import Xception
 from machines.ResNet import ResNet_152
 from machines.DenseNet import DenseNet_264
@@ -43,6 +43,8 @@ from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.metrics import accuracy_score
 from data_augmentation.image_processor_all import ImageProcessor,ImageProcessor2,augment_images_with_proportions_2,augment_images_with_proportions,combined_augment_function
 from sklearn.metrics import roc_auc_score, precision_score, recall_score, f1_score
+from features.image_features import *
+# from machines.Machines import Machine
 
 #################################################
 # START OF FUNCTIONS
@@ -166,6 +168,8 @@ def run_model(model, train_ds, test_ds, y_val, epochs):
         model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
                 loss=tf.keras.losses.binary_crossentropy,
                 metrics=['acc'])
+        # model = Machine(model_name='xception', learning_rate=0.001)
+        
     elif model == "Densenet":
         input_shape = (512, 512, 3)  
         inputs = tf.keras.layers.Input(shape=input_shape)
@@ -174,11 +178,13 @@ def run_model(model, train_ds, test_ds, y_val, epochs):
         model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
                 loss=tf.keras.losses.binary_crossentropy,
                 metrics=['acc'])
+        # model = Machine(model_name='densenet', learning_rate=0.001)
     elif model == "Resnet":
         model = ResNet_152()
         model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
               loss=tf.keras.losses.binary_crossentropy,
               metrics=['acc'])
+        # model = Machine(model_name='resnet', learning_rate=0.001)
 
     lr_callback = tf.keras.callbacks.LearningRateScheduler(my_lr, verbose=False)
     es_callback = tf.keras.callbacks.EarlyStopping(
@@ -249,7 +255,8 @@ def create_multiple_datasets(X, y, batch_size, num_slices):
     
     return final_dataset
 
-def pipeline_image_df(folder1, folder2, augmentation, num_images=None):
+# Here folder 1 has to be the normal samples, and folder 2 has to be the cancer samples
+def pipeline_image_df(folder1, folder2, augmentation, num_images):
     if num_images == None:
         num_images_normal = count_images_in_folder(folder1)
         num_images_scc = count_images_in_folder(folder2)
@@ -287,10 +294,24 @@ def pipeline_image_df(folder1, folder2, augmentation, num_images=None):
     else:
         normal_df = make_image_df(folder1, number_images=num_images, tumor_label=0)
         scc_df = make_image_df(folder2, number_images=num_images, tumor_label=1)
-        return normal_df, scc_df
+        params = {'angle': False, 'flip_code': False, 'crop_size': False, 'shear_factor': False, 'rotate_prop':False, 'flip_prop':False, 'crop_scale_prop': False, 'color_number': False, 'kernel_size': False, 'segment_prop': False}
+        return normal_df, scc_df, params
 
+def pipeline_features(normal_df, scc_df, participation_factors, params = None):
+    normal_images = normal_df['Image_Array']
+    print("Starting image features")
+    normal_features_list = Image_Features.generate_image_features(normal_images, participation_factors, None)
+    print("Image features done!")
+    normal_features_df = pd.DataFrame(normal_features_list)
+    normal_df = pd.concat([normal_df, normal_features_df], axis=1)
+    scc_images = scc_df['Image_Array']
+    scc_features_list = Image_Features.generate_image_features(scc_images, participation_factors, None)
+    scc_features_df = pd.DataFrame(scc_features_list)
+    scc_df = pd.concat([scc_df, scc_features_df], axis=1)
+    params.update(participation_factors)
+    return normal_df, scc_df, params
 
-def pipeline_machine(normal_df, scc_df, model, params = None,):
+def pipeline_machine(normal_df, scc_df, model, params = None, epochs = 20):
     results = []
     oral_image_data_augmented = pd.concat([normal_df, scc_df], ignore_index=True)
     X = np.asarray(oral_image_data_augmented['Image_Array'].tolist()).astype(np.float32)
@@ -305,12 +326,18 @@ def pipeline_machine(normal_df, scc_df, model, params = None,):
     print("X_val Length: " + str(len(X_val)))
     print("tensor_slices")
     with tf.device("CPU"):
-        train_ds = create_dataset(X_train, y_train, 32)
-        test_ds = create_dataset(X_val, y_val, 32)
+        # train_ds = (X_train, y_train, 32)
+        # test_ds = create_dataset(X_val, y_val, 32)
+        train_data = (X_train, y_train)
+        train_ds = tf.data.Dataset.from_tensor_slices(train_data)
+        test_data = (X_val, y_val)
+        test_ds = tf.data.Dataset.from_tensor_slices(test_data)
+        # train_ds = tf.data.Dataset.from_tensor_slices(X_train, y_train)
+        # test_ds = tf.data.Dataset.from_tensor_slices(X_val, y_val)
     print("dataset lengths")
     print(len(train_ds))
     print(len(test_ds))
 
-    metrics = run_model(model, train_ds, test_ds, y_val, epochs=20)
+    metrics = run_model(model, train_ds, test_ds, y_val, epochs=epochs)
     results.append({'params': params, 'metrics': metrics})
-    return results
+    return metrics
