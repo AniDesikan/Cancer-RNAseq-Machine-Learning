@@ -1,0 +1,68 @@
+import pandas
+
+sample_csv = pandas.read_csv('sample_sheet.csv', index_col='name')
+CONDITIONS = set(sample_csv['condition'].tolist())
+REPS = set(sample_csv['replicate'].tolist())
+
+rule all:
+	input: expand('results/{conditions}_{reps}_fastqc.html', conditions = CONDITIONS, reps = REPS),
+		   expand('results/{conditions}_{reps}_trimmed.fastq.gz',conditions = CONDITIONS, reps = REPS),
+		   directory('genome_index_full/')
+
+
+rule wget_files:
+	output:
+		'samples/{condition}_{rep}.fastq.gz'
+	params:
+		link = lambda wildcards: sample_csv.loc['{}_{}'.format(wildcards.condition, wildcards.rep), 'ftp_link'],
+		renamed = lambda wildcards: 'samples/{}_{}.fastq.gz'.format(wildcards.condition, wildcards.rep)
+	shell:
+		'''
+		wget -O {params.renamed} {params.link} 
+		'''
+
+# bowtie2-build builds a Bowtie index from a set of DNA sequences. bowtie2-build outputs a set of 6 files with suffixes .1.bt2, .2.bt2, .3.bt2, .4.bt2, .rev.1.bt2, and .rev.2.bt2.
+# In the case of a large index these suffixes will have a bt2l termination.
+# These files together constitute the index: they are all that is needed to align reads to that reference. The original sequence FASTA files are no longer used by Bowtie 2 once the index is built.
+rule bowtie2_build_gencode:
+	input:
+		genome = 'results/hg38.fa.gz'
+	output:
+		dir = 'genome_index_full'
+	params:
+	threads: 16
+	conda:
+		'envs/bowtie2_env.yml'
+	shell:
+		'''
+		bowtie2-build {input.genome} {output.dir}
+		'''
+
+rule fastqc:
+	input:
+		fastq = 'samples/{condition}_{rep}.fastq.gz'
+	output:
+		fastqc = 'results/{condition}_{rep}_fastqc.html'
+	params:
+		outdir = 'results/'
+	threads: 4
+	conda:
+		'envs/fastqc_env.yml'
+	shell:
+		'''
+		fastqc {input.fastq} -o {params.outdir}
+		'''
+
+rule trimomatic:
+	input:
+		fastq = 'samples/{condition}_{rep}.fastq.gz',
+		adapters = 'results/TruSeq3-SE.fa'
+	output:
+		trimmed = 'results/{condition}_{rep}_trimmed.fastq.gz'
+	threads: 8
+	conda:
+		'envs/trimmomatic_env.yml'
+	shell:
+		'''
+		trimmomatic SE {input.fastq} {output.trimmed} ILLUMINACLIP:{input.adapters}:2:30:10 LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15
+		'''

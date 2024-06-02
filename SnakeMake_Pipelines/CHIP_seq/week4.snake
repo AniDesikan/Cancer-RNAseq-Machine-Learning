@@ -1,0 +1,36 @@
+import pandas
+
+sample_csv = pandas.read_csv('sample_sheet.csv', index_col='name')
+CONDITIONS = set(sample_csv['condition'].tolist())
+REPS = set(sample_csv['replicate'].tolist())
+
+rule all:
+	input:
+		expand('results/computed_{rep}.png', rep = REPS)
+
+rule computeMatrix:
+	input:
+		bed = 'results/hg38_genes.bed',
+		runx1 = 'results/bigwig_RUNX1_{rep}.bw'
+	output:
+		'results/computed_{rep}.gz'
+	params:
+	conda:
+		'envs/deeptools_env.yml'
+	threads: 4
+	shell:
+		'''
+		computeMatrix scale-regions -S {input.runx1} -R {input.bed} -b 2000 -a 2000 -o {output}
+		'''
+
+rule plotMatrix:
+	input:
+		matrix = 'results/computed_{rep}.gz'
+	output:
+		'results/computed_{rep}.png'
+	conda:
+		'envs/deeptools_env.yml'
+	shell:
+		'''
+		plotProfile -m {input.matrix} -o {output}
+		'''

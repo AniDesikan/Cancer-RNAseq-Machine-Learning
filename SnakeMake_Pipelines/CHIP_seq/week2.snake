@@ -1,0 +1,115 @@
+import pandas
+sample_csv = pandas.read_csv("sample_sheet.csv", index_col = "name")
+CONDITIONS = set(sample_csv['condition'].tolist())
+REPS = set(sample_csv['replicate'].tolist())
+
+rule all:
+	input:
+		expand('results/sorted_{condition}_{rep}.bam.bai', condition=CONDITIONS, rep=REPS),
+		expand('results/bigwig_{condition}_{rep}.bw', condition=CONDITIONS, rep=REPS),
+		expand('results/flagstat_{condition}_{rep}.txt', condition=CONDITIONS, rep=REPS),
+		'results/plot.png'
+
+rule bowtie2_align:
+	input:
+#		genome = 'genome_index_full',
+		fastq = 'samples/{condition}_{rep}_trimmed.fastq.gz'
+	output:
+		bam = 'results/{condition}_{rep}.bam'
+	threads: 16
+	params:
+	conda:
+		'envs/bowtie2_env.yml'
+	shell:
+		'''
+		bowtie2 -p {threads} -x genome_index_full -U {input.fastq} | samtools view -Sb >{output.bam}
+		'''
+
+
+rule samtools_sort:
+	input:
+		bam = 'results/{condition}_{rep}.bam'
+	output:
+		sorted = 'results/sorted_{condition}_{rep}.bam'
+	conda:
+		'envs/samtools_env.yml'
+	shell:
+		'''
+		samtools sort {input.bam} -o {output.sorted}
+		'''
+
+rule samtools_idx:
+	input:
+		sorted = 'results/sorted_{condition}_{rep}.bam'
+	output:
+		indexed = 'results/sorted_{condition}_{rep}.bam.bai'
+	conda:
+		'envs/samtools_env.yml'
+	shell:
+		'''
+		samtools index {input.sorted} 
+		'''
+
+rule samtools_flagstat:
+	input:
+		indexed = 'results/sorted_{condition}_{rep}.bam'
+	output:
+		flagstat = 'results/flagstat_{condition}_{rep}.txt'
+	conda:
+		'envs/samtools_env.yml'
+	shell:
+		'''
+		samtools flagstat {input.indexed} > {output.flagstat}
+		'''
+
+rule multiqc:
+	input:
+		dir = 'results/'
+	output:
+		html = 'multiqc_report.html'
+	params:
+	conda:
+		'envs/multiqc_env.yml'
+	shell:
+		'''
+		multiqc {input.dir} 
+		'''
+
+rule bamCoverage:
+	input:
+		indexed = 'results/sorted_{condition}_{rep}.bam',
+		indexed2 = 'results/sorted_{condition}_{rep}.bam.bai'
+	output:
+		bigWig = 'results/bigwig_{condition}_{rep}.bw'
+	threads: 4
+	conda:
+		'envs/deeptools_env.yml'
+	shell:
+		'''
+		bamCoverage -b {input.indexed} -o {output.bigWig}
+		'''
+
+rule multiBwSummary:
+	input:
+		bigwigs = expand('results/bigwig_{condition}_{rep}.bw', condition = CONDITIONS, rep = REPS)
+	output:
+		output = 'results/multibwsummary.npz'
+	conda:
+		'envs/deeptools_env.yml'
+	shell:
+		'''
+		multiBigwigSummary bins -b {input.bigwigs} -o {output.output}
+		'''
+
+rule plotCorrelation:
+	input:
+		summary = 'results/multibwsummary.npz'
+	output:
+		plot = 'results/plot.png'
+	params:
+	conda:
+		'envs/deeptools_env.yml'
+	shell:
+		'''
+		plotCorrelation -in {input.summary} -c pearson -p heatmap -o {output.plot} --plotNumbers
+		'''

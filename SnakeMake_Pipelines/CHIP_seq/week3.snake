@@ -1,0 +1,124 @@
+import pandas
+sample_csv = pandas.read_csv("sample_sheet.csv", index_col = "name")
+CONDITIONS = set(sample_csv['condition'].tolist())
+REPS = set(sample_csv['replicate'].tolist())
+
+rule all:
+	input:
+		'results/motifs_new/'
+
+
+
+#Convert BAM files to the HOMER format
+rule make_tag_dir:
+	input:
+		#BAM files
+		bam = 'results/sorted_{condition}_{rep}.bam'
+	output:
+		 dir = directory('results/{condition}_{rep}_tag/')
+	conda:
+		'envs/homer_env.yml'
+	shell:
+		'''
+		makeTagDirectory {output.dir} {input.bam}
+		'''
+
+# This should probably use the narrowpeaks file format?
+rule findPeaks:
+	input:
+		tag_dir = 'results/RUNX1_{rep}_tag/',
+		control_dir = 'results/INP_{rep}_tag/'
+	output:
+		peaks = 'results/{rep}_peaks.txt'
+	conda:
+		'envs/homer_env.yml'
+	shell:
+		'''
+		findPeaks {input.tag_dir} -style factor -o {output.peaks} -i {input.control_dir}
+		'''
+
+rule convertPeakFiles:
+	input:
+		peak_file = 'results/{rep}_peaks.txt'
+	output:
+		bed_output = 'results/{rep}_peaks.bed'
+	conda:
+		'envs/homer_env.yml'
+	shell:
+		'''
+		pos2bed.pl {input.peak_file} > {output.bed_output} 
+		'''
+
+#https://bedtools.readthedocs.io/en/latest/content/tools/intersect.html
+# Use -wa and -wb so that I know what the intersects are 
+rule intersect_peaks:
+	input:
+		peak1 = 'results/rep1_peaks.bed',
+		peak2 =  'results/rep2_peaks.bed'
+	output:
+		intersected = 'results/peaks_merged_new.bed'
+	conda:
+		'envs/bedtools_env.yml'
+	shell:
+		'''
+		bedtools intersect -a {input.peak1} -b {input.peak2} -wa > {output.intersected}
+		'''
+
+# Use the ENCODE blacklist for the GRCh38 genome 'results/ENCFF356LFX.bed'
+rule filter_blacklist:
+	input:
+		intersected_peaks = 'results/peaks_merged_new.bed',
+		blacklist = 'results/hg38-blacklist.v2.bed'
+	output:
+		output = 'results/peaks_filtered_new.bed'
+	conda:
+		'envs/bedtools_env.yml'
+	shell:
+		'''
+		bedtools intersect -v -a {input.intersected_peaks} -b {input.blacklist} > {output.output}
+		'''
+
+rule unzip_gtf:
+	input:
+		gz = 'results/gencode.v45.primary_assembly.annotation.gtf.gz'
+	output:
+		gtf = 'results/gencode.v45.primary_assembly.annotation.gtf'
+	shell:
+		'''
+		gunzip -c {input.gz} > {output.gtf}
+		'''
+
+rule annotate_peaks:
+	input:
+		peaks = 'results/peaks_filtered_new.bed',
+		gtf = 'results/gencode.v45.primary_assembly.annotation.gtf'
+	output:
+		annotation = 'results/peaks_repr_filtered_annotations_new.txt'
+	conda:
+		'envs/homer_env.yml'
+	shell:
+		'''
+		annotatePeaks.pl {input.peaks} hg38 -gtf {input.gtf} > {output.annotation}
+		'''
+rule unzip_genome:
+	input:
+		gz = 'results/GRCh38.primary_assembly.genome.fa.gz'
+	output:
+		fa = 'results/GRCh38.primary_assembly.genome.fa'
+	shell:
+		'''
+		gunzip -c {input.gz} > {output.fa}
+		'''
+
+rule motifs:
+	input:
+		peak = 'results/peaks_repr_filtered_annotations_new.txt',
+		genome = 'results/GRCh38.primary_assembly.genome.fa'
+	output:
+		dir = 'results/motifs_new/'
+	conda:
+		'envs/homer_env.yml'
+	shell:
+		'''
+		findMotifsGenome.pl {input.peak} {input.genome} {output.dir} -size 200
+		'''

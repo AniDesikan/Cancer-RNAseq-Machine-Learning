@@ -1,0 +1,324 @@
+SUBSETFILES = ['subsetATACrep3', 'subsetATACrep4']
+FILES = ['ATACrep3','ATACrep4']
+READS = ['R1','R2']
+PAIR = ['FP','FUP', 'RP', 'RUP']
+
+rule all:
+	input:
+		#directory('genome_index_full'),
+		#expand('results/sorted_{condition}_{rep}.bam.bai', condition = FILES, rep = READS)
+		#expand('results/{condition}_motifs_new/', condition = FILES)
+		#'results/peaks_repr_filtered_annotations_new.txt'
+		#expand('results/signal_coverage_{FILES}_0_100.png', FILES= FILES),
+		#expand('results/signal_coverage_{FILES}_180_247.png', FILES= FILES)
+		#'results/ATACrep3_R1_peaks.bed'
+		#expand('results/flagstat_{reps}.txt', reps=FILES),
+		expand('results/flagstat_mito_{reps}.txt', reps=FILES),
+		#'results/multiqc_report.html'
+		#'results/ATAC_motifs'
+		#'results/hist.png'
+		'results/ATAC_annotated.bed'
+
+
+
+rule bowtie2_build_gencode:
+	input:
+		genome = 'results/hg38.fa.gz'
+	output:
+		dir = 'genome_index_full'
+	params:
+	threads: 16
+	conda:
+		'envs/bowtie2_env.yml'
+	shell:
+		'''
+		bowtie2-build {input.genome} {output.dir}
+		'''
+
+
+rule trimmomatic:
+	input:
+		r1 = 'samples/{FILES}_R1.fastq.gz',
+		r2 = 'samples/{FILES}_R2.fastq.gz'
+	output:
+		# expand('results/{FILES}_{read}.fastq.gz', read=['1P', '1U', '2P', '2U']),
+		p1 = 'results/{FILES}_FP.fastq.gz',
+		p2 = 'results/{FILES}_RP.fastq.gz',
+		u1 = 'results/{FILES}_FU.fastq.gz',
+		u2 = 'results/{FILES}_PU.fastq.gz'
+	params:
+		adapter = 'results/NexteraPE-PE.fa',
+		outfile = 'results/{FILES}.fastq.gz'
+	threads: 8
+	conda: 'envs/trimmomatic_env.yml'
+	shell: '''
+		trimmomatic PE -threads {threads} \
+		{input.r1} {input.r2} -baseout {params.outfile} \
+		ILLUMINACLIP:{params.adapter}:2:30:10 LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15
+		'''
+rule fastqc_trim:
+	input: 'results/{FILES}_{PAIR}.fastq.gz'
+	output: 'results/{FILES}_{PAIR}_fastqc.html'
+	params: 'results/'
+	threads: 4
+	conda: 'envs/fastqc_env.yml'
+	shell: '''
+		fastqc {input} -o {params}
+		'''
+
+
+rule bowtie2_align:
+	input:
+		forward_paired = 'results/{reps}_1P.fastq.gz',
+		reverse_paired = 'results/{reps}_2P.fastq.gz',
+	output:
+		bam = 'results/{reps}.bam'
+	threads: 32
+	params:
+	conda: 
+		'envs/bowtie2_env.yml'
+	shell:
+		'''
+		bowtie2 -p {threads} -x genome_index_full -1 {input.forward_paired} -2 {input.reverse_paired} | samtools view -Sb > {output.bam}
+		'''
+
+rule samtools_sort:
+	input:
+		bam = 'results/{reps}.bam'
+	output:
+		sorted = 'results/sorted_{reps}.bam'
+	conda:
+		'envs/samtools_env.yml'
+	shell:
+		'''
+		samtools sort {input.bam} -o {output.sorted}
+		'''
+
+rule samtools_idx:
+	input:
+		sorted = 'results/sorted_{reps}.bam'
+	output:
+		indexed = 'results/sorted_{reps}.bam.bai'
+	conda:
+		'envs/samtools_env.yml'
+	shell:
+		'''
+		samtools index {input.sorted} 
+		'''
+
+rule samtools_flagstat:
+	input:
+		sorted = 'results/sorted_{reps}.bam',
+		indexed = 'results/sorted_{reps}.bam.bai'
+	output:
+		flagstat = 'results/flagstat_{reps}.txt'
+	conda:
+		'envs/samtools_env.yml'
+	shell:
+		'''
+		samtools flagstat {input.sorted} > {output.flagstat}
+		'''
+
+
+
+rule multiqc:
+	input: expand('results/{bams}_{reps}.txt', reps = FILES, bams = ['sorted', 'mito']),
+		expand('results/{reps}_{reads}_fastqc.html', reps = FILES, reads = READS),
+		expand('results/{reps}_{pairs}_fastqc.html', reps = FILES, pairs = PAIR)
+	output: 'results/multiqc_report.html'
+	params: 
+			indir = 'results',
+			outdir = 'results'
+	conda: 'envs/multiqc_env.yml'
+	shell: '''
+		multiqc {params.indir} -o {params.outdir}
+		'''
+
+
+# Remove any mitochondrial reads with 
+#samtools	view input.bam |	egrep	-v	chrM	| samtools	view	-bT genome_index_full --o output.bam
+#TODO
+rule remove_mito_reads:
+	input:
+		indexed = 'results/sorted_{reps}.bam'
+	output:
+		removed_mito = 'results/mito_{reps}.bam'
+	conda:
+		'envs/samtools_env.yml'
+	shell:
+		'''
+		samtools view -o {output.removed_mito} -e 'rname != "chrM"' {input.indexed}
+
+		'''
+
+rule samtools_idx_mito:
+	input:
+		sorted = 'results/mito_{reps}.bam'
+	output:
+		indexed = 'results/mito_{reps}.bam.bai'
+	conda:
+		'envs/samtools_env.yml'
+	shell:
+		'''
+		samtools index {input.sorted} 
+		'''
+
+
+# Using deeptools, shift bam files using alignmentSieve to account for tagmentation
+#TODO
+rule shift_bam_files:
+	input:
+		removed_mito = 'results/mito_{reps}.bam',
+		indexed = 'results/mito_{reps}.bam.bai'
+	output:
+		shifted = 'results/shift_{reps}.bam'
+	conda:
+		'envs/deeptools_env.yml'
+	shell:
+		'''
+		alignmentSieve -b {input.removed_mito} -o {output.shifted} --filterMetrics new_log.txt --ATACshift
+		'''
+
+rule samtools_sort_shift:
+	input:
+		bam = 'results/shift_{reps}.bam'
+	output:
+		sorted = 'results/sortedshift_{reps}.bam'
+	conda:
+		'envs/samtools_env.yml'
+	shell:
+		'''
+		samtools sort {input.bam} -o {output.sorted}
+		'''
+
+rule samtools_idx_shift:
+	input:
+		sorted = 'results/sortedshift_{reps}.bam'
+	output:
+		indexed = 'results/sortedshift_{reps}.bam.bai'
+	conda:
+		'envs/samtools_env.yml'
+	shell:
+		'''
+		samtools index {input.sorted} 
+		'''
+
+# Perform QC on these shifted bam files using ATACseqQC using R
+
+# Call peaks on bed files with default params using MACS
+# Assume the bam files are pair ended and use -f format BAMPE
+#rule call_peaks:
+#	input: 'results/sortedshift_{reps}.bam'
+#	output: 'results/{reps}_summits.bed'
+#	params:
+#		name = '{FILES}',
+#		outdir = 'results'
+#	shell: '''
+#		macs3 callpeak -t {input} -f BAM \
+#		-n {params.name} --outdir {params.outdir} -g mm --nomodel
+#		'''	
+
+rule intersect_peaks:
+	input:
+		a = 'results/ATACrep3_summits.bed',
+		b = 'results/ATACrep4_summits.bed'
+	output: 'results/ATAC_intersect.bed'
+	conda: 'envs/bedtools_env.yml'
+	shell: '''
+		bedtools intersect -a {input.a} -b {input.b} -f 0.5  > {output}
+		'''
+
+rule filter_blacklist:
+	input:
+		peaks = 'results/ATAC_intersect.bed',
+		blacklist = 'samples/hg38-blacklist.v2.bed'
+	output: 'results/ATAC_filtered.bed'
+	conda: 'envs/bedtools_env.yml'
+	shell: '''
+		bedtools intersect -a {input.peaks} -b {input.blacklist} -v > {output}
+		'''
+
+rule annotate_peaks:
+	input:
+		filtered = 'results/ATAC_filtered.bed',
+		annotation = 'results/gencode.v45.primary_assembly.annotation.gtf'
+	output: 'results/ATAC_annotated.bed'
+	conda: 'envs/homer_env.yml'
+	shell: '''
+		annotatePeaks.pl {input.filtered} hg38 -gtf {input.annotation} > {output}
+		'''
+
+rule motifs:
+	input:
+		peaks = 'results/ATAC_filtered.bed',
+		genome = 'results/GRCh38.primary_assembly.genome.fa'
+	output: directory('results/ATAC_motifs')
+	conda: 'envs/homer_env.yml'
+	shell: '''
+		findMotifsGenome.pl {input.peaks} {input.genome} {output} -size 200
+		'''
+
+# Coverage plots for NFR/NBR
+rule deeptools_filter:
+	input: bam = 'results/sortedshift_{FILES}.bam',
+		index = 'results/sortedshift_{FILES}.bam.bai'
+	output: 'results/{FILES}_{min}_{max}.sep.bam'
+	conda: 'envs/deeptools_env.yml'
+	shell: '''
+		alignmentSieve -b {input.bam} -o {output} \
+		--minFragmentLength {wildcards.min} \
+		--maxFragmentLength {wildcards.max}
+		'''
+
+rule samtools_idx_filter:
+	input: 'results/{FILES}_{min}_{max}.sep.bam'
+	output: 'results/{FILES}_{min}_{max}.sep.bam.bai'
+	conda: 'envs/samtools_env.yml'
+	shell: '''
+		samtools index -b {input} -o {output}
+		'''
+
+rule bamCoverage:
+	input: 
+		bam = 'results/{FILES}_{min}_{max}.sep.bam',
+		index = 'results/{FILES}_{min}_{max}.sep.bam.bai'
+	output: 'results/{FILES}_{min}_{max}.bw'
+	threads: 4
+	conda: 'envs/deeptools_env.yml'
+	shell: '''
+		bamCoverage -b {input.bam} -o {output}
+		'''
+
+rule computeMatrix:
+	input:
+		atac = 'results/{FILES}_{min}_{max}.bw',
+		regions = 'results/hg38_genes.bed'
+	output: 'results/matrix_{FILES}_{min}_{max}.gz'
+	params:
+		upstream = 2000,
+		downstream = 2000
+	conda: 'envs/deeptools_env.yml'
+	threads: 4
+	shell: '''computeMatrix reference-point -R {input.regions} \
+			-S {input.atac} \
+			-o {output} \
+			-b {params.upstream} -a {params.downstream}
+			'''
+
+rule plotMatrix:
+	input: 'results/matrix_{FILES}_{min}_{max}.gz'
+	output: 'results/signal_coverage_{FILES}_{min}_{max}.png'
+	conda: 'envs/deeptools_env.yml'
+	shell: '''plotProfile -m {input} -o {output}'''
+
+
+
+rule fragmentPlot:
+	input: 
+		ATAC3 = 'results/sorted_ATACrep3.bam',
+		indexed3 = 'results/sorted_ATACrep3.bam.bai',
+		ATAC4 = 'results/sorted_ATACrep4.bam',
+		indexed4 = 'results/sorted_ATACrep4.bam.bai'
+	output: 'results/hist.png'
+	conda: 'envs/deeptools_env.yml'
+	shell: '''bamPEFragmentSize -b {input.ATAC3} {input.ATAC4} -o hist.png'''
